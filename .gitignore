@@ -1,0 +1,7 @@
+node_modules/
+logs/
+screenshots/
+.DS_Store
+~$*.xlsx
+data/output/
+*.log

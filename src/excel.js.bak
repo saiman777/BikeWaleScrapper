@@ -1,0 +1,251 @@
+const XLSX = require('xlsx');
+
+// General model mapping - all model normalizations in one place
+const MODEL_MAPPING = {
+    'pleasure+': 'pleasure',
+    'pleasure+ xtec': 'pleasure-plus',
+    'activa': 'activa-6g',
+    // Add more mappings as needed
+};
+
+// Simple normalization function
+function normalizePleasureModel(model) {
+    const normalized = model.toLowerCase().trim();
+    return MODEL_MAPPING[normalized] || normalized;
+}
+
+function readBikesFromExcel(filePath) {
+    try {
+        console.log(`📊 Reading Excel file: ${filePath}`);
+        
+        // Read Excel file
+        const workbook = XLSX.readFile(filePath);
+        const sheetName = workbook.SheetNames[0]; // First sheet
+        const worksheet = workbook.Sheets[sheetName];
+        
+        // Convert to JSON with header: 1 to get array of arrays (preserving row structure)
+        const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        
+        console.log(`📊 Excel columns found: ${JSON.stringify(Object.keys(data[0] || {}))}`);
+        console.log(`📋 Reading from 3 columns: Brand (Column A), Model (Column B), Variant (Column C)`);
+        console.log(`📋 Starting from row 3 (skipping header rows)`);
+        
+        const bikeList = [];
+        
+        // Start from row 2 (index 2) to skip header rows (rows 1 and 2)
+        for (let i = 2; i < data.length; i++) {
+            const row = data[i];
+            
+            // Check if row has at least 3 columns and they're not empty
+            if (row && row.length >= 3 && row[0] && row[1] && row[2]) {
+                const brand = row[0].toString().trim();
+                const model = row[1].toString().trim();
+                const variant = row[2].toString().trim();
+                
+                if (brand && model && variant) {
+                    const bike = {
+                        brand: brand.toLowerCase(),
+                        model: normalizePleasureModel(model),  // Apply normalization for pleasure models
+                        variant: variant.toLowerCase()
+                    };
+                    bikeList.push(bike);
+                    console.log(`✅ Row ${i + 1}: "${brand} | ${model} | ${variant}" → ${JSON.stringify(bike)}`);
+                } else {
+                    console.log(`⚠️ Row ${i + 1}: Skipping incomplete row - Brand: "${brand}", Model: "${model}", Variant: "${variant}"`);
+                }
+            } else {
+                console.log(`⚠️ Row ${i + 1}: Skipping empty or incomplete row`);
+            }
+        }
+        
+        console.log(`\n📊 Conversion Results:`);
+        console.log(`✅ Successfully converted: ${bikeList.length} bikes`);
+        console.log(`❌ Failed: ${data.length - 2 - bikeList.length} bikes (excluding header rows)`);
+        
+        return bikeList;
+        
+    } catch (error) {
+        console.error('❌ Error reading Excel file:', error.message);
+        return [];
+    }
+}
+
+function parseBikeString(bikeString) {
+    // Clean the string
+    const clean = bikeString.trim().replace(/["']/g, '');
+    const parts = clean.split(' ');
+    
+    if (parts.length < 2) {
+        throw new Error(`Invalid bike name: "${bikeString}"`);
+    }
+    
+    const brand = parts[0].toLowerCase();
+    let model = '';
+    let variant = '';
+    
+    // Check for dash-separated variants (e.g., "Drum - Hybrid")
+    if (clean.includes(' - ')) {
+        const [beforeDash, afterDash] = clean.split(' - ');
+        const beforeParts = beforeDash.split(' ');
+        model = beforeParts.slice(1).join(' ').toLowerCase();
+        variant = afterDash.toLowerCase();
+    } else {
+        // Look for common variant patterns at the end
+        const lastTwo = parts.slice(-2).join(' ').toLowerCase();
+        const lastOne = parts[parts.length - 1].toLowerCase();
+        
+        // Multi-word variants
+        if (lastTwo.match(/(drum hybrid|drum deluxe|street rally hybrid|tech 150|racing sixties|s - hybrid)/)) {
+            variant = lastTwo;
+            model = parts.slice(1, -2).join(' ').toLowerCase();
+        }
+        // Single-word variants
+        else if (lastOne.match(/(standard|tech|premium|deluxe|hybrid|tft|dlx|dual|sport|h-smart)/)) {
+            variant = lastOne;
+            model = parts.slice(1, -1).join(' ').toLowerCase();
+        }
+        // Default case
+        else {
+            model = parts.slice(1).join(' ').toLowerCase();
+            variant = 'standard';
+        }
+    }
+    
+    return { brand, model, variant };
+}
+
+// Test function
+function testConverter() {
+    console.log('🧪 Testing Excel Converter...\n');
+    
+    // Test with sample data
+    const testBikes = [
+        'Honda Activa 125 DLX',
+        'Honda Activa 125 H-Smart',
+        'TVS NTorq 150 TFT',
+        'Yamaha Fascino 125 Drum - Hybrid',
+        'Yamaha Fascino 125 Drum Deluxe',
+        'Vespa S 150 Standard',
+        'Vespa S 150 Tech',
+        'Vespa VXL 125 Premium',
+        'Vespa VXL 150 Dual',
+        'Vespa SXL 125 Premium',
+        'Yamaha RayZR 125 Fi Street Rally - Hybrid'
+    ];
+    
+    console.log('📋 Test Input:');
+    testBikes.forEach((bike, index) => {
+        console.log(`${index + 1}. ${bike}`);
+    });
+    
+    console.log('\n🔄 Converting...\n');
+    
+    const results = testBikes.map((bike, index) => {
+        try {
+            const parsed = parseBikeString(bike);
+            console.log(`✅ ${index + 1}. "${bike}" → ${JSON.stringify(parsed)}`);
+            return parsed;
+        } catch (error) {
+            console.log(`❌ ${index + 1}. "${bike}" → ERROR: ${error.message}`);
+            return null;
+        }
+    }).filter(item => item !== null);
+    
+    console.log(`\n📊 Test Results:`);
+    console.log(`✅ Successfully converted: ${results.length}/${testBikes.length} bikes`);
+    
+    return results;
+}
+
+// Function to read three-column Excel format (Brand, Model, Variant)
+function readThreeColumnExcel(filePath, maxRows = null) {
+    try {
+        console.log(`📊 Reading three-column Excel file: ${filePath}`);
+        
+        // Read Excel file
+        const workbook = XLSX.readFile(filePath);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        
+        // Convert to JSON with header: 1 to get array of arrays (still used for row count)
+        const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+        console.log(`📋 Reading from 3 columns: Brand (Column B), Model (Column C), Variant (Column D)`);
+        console.log(`📋 Starting from row 2 (skipping header row)`);
+
+        const bikeList = [];
+
+        // Helper to read a cell by Excel address safely
+        const readCell = (colLetter, rowNumber) => {
+            const cellAddress = `${colLetter}${rowNumber}`;
+            const cell = worksheet[cellAddress];
+            return cell && cell.v !== undefined && cell.v !== null ? String(cell.v).trim() : '';
+        };
+
+        // Iterate by physical rows using worksheet cell access to avoid leading empty-column issues
+        // Data rows start at 2 (row 1 is header)
+        const totalRows = data.length; // approximate number of rows
+        for (let r = 2; r <= totalRows + 1; r++) {
+            const brand = readCell('B', r);
+            const model = readCell('C', r);
+            const variant = readCell('D', r);
+
+            if (brand || model || variant) {
+                if (brand && model && variant) {
+                    const bike = {
+                        brand: brand.toLowerCase(),
+                        model: normalizePleasureModel(model),
+                        variant: variant.toLowerCase()
+                    };
+                    bikeList.push(bike);
+                    console.log(`✅ Row ${r}: "${brand} | ${model} | ${variant}" → ${JSON.stringify(bike)}`);
+                } else {
+                    console.log(`⚠️ Row ${r}: Skipping incomplete row - Brand: "${brand}", Model: "${model}", Variant: "${variant}"`);
+                }
+            } else {
+                // completely empty row, continue
+            }
+        }
+        
+        console.log(`\n📊 Conversion Results:`);
+        console.log(`✅ Successfully converted: ${bikeList.length} bikes`);
+        console.log(`❌ Failed: ${data.length - 2 - bikeList.length} bikes (excluding header rows)`);
+        
+        return bikeList;
+        
+    } catch (error) {
+        console.error('❌ Error reading Excel file:', error.message);
+        return [];
+    }
+}
+
+// Main function to convert Excel file (supports both formats)
+function convertExcelToBikeList(excelFilePath) {
+    console.log('🔄 Converting Excel to bike list...');
+    const bikeList = readBikesFromExcel(excelFilePath);
+    
+    console.log(`\n📊 Final Results:`);
+    console.log(`✅ Successfully converted: ${bikeList.length} bikes`);
+    
+    if (bikeList.length > 0) {
+        console.log('\n📋 Converted Bike List:');
+        bikeList.forEach((bike, index) => {
+            console.log(`${index + 1}. ${bike.brand} ${bike.model} ${bike.variant}`);
+        });
+    }
+    
+    return bikeList;
+}
+
+// Run test if called directly
+if (require.main === module) {
+    testConverter();
+}
+
+module.exports = { 
+    readBikesFromExcel, 
+    readThreeColumnExcel,
+    parseBikeString, 
+    convertExcelToBikeList,
+    testConverter 
+};

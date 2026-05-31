@@ -1,0 +1,244 @@
+const { scrapeBikeWale2 } = require('./myScrapper2');
+const { convertExcelToBikeList, readThreeColumnExcel } = require('./excel-converter');
+const puppeteer = require('puppeteer');
+const XLSX = require('xlsx');
+const path = require('path');
+
+// Target city for scraping
+const TARGET_CITY = 'thiruvananthapuram';
+// Explicit slug for special cases like multi-part cities
+const TARGET_CITY_SLUG = 'Thiruvananthapuram';
+
+// Load bike list from Excel file (three-column format)
+console.log('📊 Loading bike list from three-column Excel file...');
+const fullBikeList = readThreeColumnExcel('Scooter List (Updated).xlsx');
+console.log(`✅ Loaded ${fullBikeList.length} bikes from Excel file`);
+
+// Randomly select 10 bikes
+function getRandomBikes(bikes, count) {
+    const shuffled = [...bikes].sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, count);
+}
+
+const bikeList = fullBikeList; // Process all bikes from bikeVaraintmodel.xlsx
+console.log(`📊 Processing all ${bikeList.length} bikes from Excel:`);
+bikeList.forEach((bike, index) => {
+    console.log(`${index + 1}. ${bike.brand} ${bike.model} ${bike.variant}`);
+});
+
+async function runExcelScraper() {
+    console.log('🏍️ Excel BikeWale Scraper Starting...');
+    console.log(`📊 Total items: ${bikeList.length}`);
+    
+    const results = [];
+    const startTime = Date.now();
+    let currentBrand = null;
+    let browser;
+    
+    try {
+        // Launch single browser instance
+        console.log('🚀 Launching browser...');
+        browser = await puppeteer.launch({
+            headless: "new",
+            slowMo: 0,
+            devtools: false,
+            defaultViewport: { width: 1024, height: 768 },
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-web-security',
+                '--disable-extensions',
+                '--no-default-browser-check',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--disable-images',
+                '--disable-plugins',
+                '--disable-background-networking',
+                '--disable-sync',
+                '--disable-translate',
+                '--hide-scrollbars',
+                '--mute-audio',
+                '--no-first-run',
+                '--disable-default-apps',
+                '--disable-popup-blocking',
+                '--disable-prompt-on-repost',
+                '--disable-hang-monitor',
+                '--disable-client-side-phishing-detection',
+                '--disable-component-update',
+                '--disable-domain-reliability',
+                '--disable-features=TranslateUI',
+                '--disable-ipc-flooding-protection',
+                '--disable-background-mode',
+                '--disable-features=VizDisplayCompositor'
+            ],
+            timeout: 60000,
+            protocolTimeout: 60000
+        });
+        console.log('✅ Browser launched successfully');
+        
+        for (let i = 0; i < bikeList.length; i++) {
+            const item = bikeList[i];
+            console.log(`\n📍 [${i + 1}/${bikeList.length}] Processing: ${item.brand} ${item.model} ${item.variant}`);
+            
+            // Check if we're switching brands and need to clear browser state
+            if (currentBrand && currentBrand !== item.brand) {
+                console.log(`🔄 Brand switch detected: ${currentBrand} → ${item.brand}`);
+                console.log(`🧹 Clearing browser state between brands...`);
+                
+                // Clear all cookies and local storage
+                const pages = await browser.pages();
+                for (const page of pages) {
+                    try {
+                        await page.deleteCookie();
+                        await page.evaluate(() => {
+                            localStorage.clear();
+                            sessionStorage.clear();
+                        });
+                    } catch (e) {
+                        // Ignore errors
+                    }
+                }
+            }
+            currentBrand = item.brand;
+            
+            try {
+                        // Use the optimized scrapeBikeWale2 function with shared browser, city and slug
+                        const result = await scrapeBikeWale2(item.brand, item.model, item.variant, TARGET_CITY, TARGET_CITY_SLUG, browser);
+            
+            // Extract price breakdown data
+            const priceBreakdown = result.priceBreakdown || {};
+            const exShowroom = priceBreakdown.exShowroom || '0';
+            const rto = priceBreakdown.rto || '0';
+            const rtoExpense = priceBreakdown.rtoExpense || '0';
+            const insurance = priceBreakdown.insurance || '0';
+            const onRoadPrice = priceBreakdown.onRoadPrice || '0';
+            const pmEDriveSubsidy = priceBreakdown.pmEDriveSubsidy || '0';
+            const softwarePackage = priceBreakdown.softwarePackage || '0';
+            const discountOffer = priceBreakdown.discountOffer || '0';
+            
+            results.push({
+                brand: item.brand,
+                model: item.model,
+                variant: item.variant,
+                exShowroom: exShowroom,
+                rto: rto,
+                rtoExpense: rtoExpense,
+                insurance: insurance,
+                onRoadPrice: onRoadPrice,
+                // New columns
+                'PM E-Drive Subsidy': pmEDriveSubsidy,
+                'Software(Pro/Tecpac)': softwarePackage,
+                'Discount/Introduction offer': discountOffer,
+                status: true,
+                reason: 'Success'
+            });
+            
+            console.log(`✅ [${i + 1}] Success: ${item.brand} ${item.model} ${item.variant}`);
+            
+        } catch (error) {
+            results.push({
+                brand: item.brand,
+                model: item.model,
+                variant: item.variant,
+                exShowroom: '0',
+                rto: '0',
+                rtoExpense: '0',
+                insurance: '0',
+                onRoadPrice: '0',
+                'PM E-Drive Subsidy': '0',
+                'Software(Pro/Tecpac)': '0',
+                'Discount/Introduction offer': '0',
+                status: false,
+                reason: error.message
+            });
+            
+            console.log(`❌ [${i + 1}] Failed: ${item.brand} ${item.model} ${item.variant} - ${error.message}`);
+        }
+        
+        // 3-second delay between requests
+        if (i < bikeList.length - 1) {
+            console.log(`⏳ Waiting 3 seconds before next request...`);
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+    }
+    
+    } finally {
+        // Close browser
+        if (browser) {
+            console.log('🔒 Closing browser...');
+            await browser.close();
+        }
+    }
+    
+    const endTime = Date.now();
+    const totalTime = Math.round((endTime - startTime) / 1000);
+    
+    // Create Excel workbook
+    const workbook = XLSX.utils.book_new();
+    
+    // Convert results to worksheet
+    const worksheet = XLSX.utils.json_to_sheet(results);
+    
+    // Add the worksheet to workbook
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Bike Prices');
+    
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const filename = `bike_prices_${timestamp}.xlsx`;
+    const filepath = path.join(__dirname, filename);
+    
+    // Write Excel file
+    XLSX.writeFile(workbook, filepath);
+    
+    // Summary
+    const successful = results.filter(r => r.status).length;
+    const failed = results.filter(r => !r.status).length;
+    
+    console.log('\n🎉 Excel Scraping Completed!');
+    console.log(`⏱️  Total time: ${totalTime} seconds`);
+    console.log(`✅ Successful: ${successful}/${bikeList.length}`);
+    console.log(`❌ Failed: ${failed}/${bikeList.length}`);
+    console.log(`📊 Average time per item: ${Math.round(totalTime / bikeList.length)} seconds`);
+    console.log(`📁 Excel file saved: ${filename}`);
+    
+    // Display results summary
+    console.log('\n📋 RESULTS SUMMARY:');
+    console.log('Brand | Model | Variant | Ex-Showroom | RTO | RTO Expense | Insurance | On-Road Price | PM E-Drive Subsidy | Software(Pro/Tecpac) | Discount/Introduction offer | Status | Reason');
+    console.log('------|-------|---------|-------------|-----|-------------|-----------|---------------|--------------------|-----------------------|------------------------------|--------|-------');
+    
+    results.forEach(result => {
+        const status = result.status ? '✅' : '❌';
+        console.log(`${result.brand} | ${result.model} | ${result.variant} | ${result.exShowroom} | ${result.rto} | ${result.rtoExpense} | ${result.insurance} | ${result.onRoadPrice} | ${result['PM E-Drive Subsidy'] || 'N/A'} | ${result['Software(Pro/Tecpac)'] || 'N/A'} | ${result['Discount/Introduction offer'] || 'N/A'} | ${status} | ${result.reason}`);
+    });
+    
+    return {
+        results,
+        summary: {
+            total: bikeList.length,
+            successful,
+            failed,
+            totalTime,
+            averageTimePerItem: Math.round(totalTime / bikeList.length)
+        },
+        filename
+    };
+}
+
+// Run the scraper
+if (require.main === module) {
+    runExcelScraper()
+        .then((data) => {
+            console.log(`\n🎯 Final Summary:`);
+            console.log(`📁 Excel file: ${data.filename}`);
+            console.log(`✅ Success rate: ${data.summary.successful}/${data.summary.total} (${Math.round(data.summary.successful/data.summary.total*100)}%)`);
+        })
+        .catch(error => {
+            console.error('❌ Scraping failed:', error);
+            process.exit(1);
+        });
+}
+
+module.exports = { runExcelScraper };
